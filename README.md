@@ -14,6 +14,7 @@ This package gives you that loop as three reusable Claude Code artifacts.
 |---|---|
 | `agents/red-team-critic.md` | Reusable adversarial-reviewer subagent. Tools restricted to `Read`, `Grep` — cannot mutate the spec. |
 | `skills/red-team-spec/SKILL.md` | Standalone loop. Dispatches the critic, applies accepted findings to the spec, surfaces a per-round 1–10 readiness verdict, then gates further rounds on user approval. Round 1 uses fresh `Agent()`; rounds 2+ dispatch a new `Agent()` with the prior round's findings and rebuttal summary inlined in the prompt (the current Claude Code CLI does not expose `SendMessage` for true session resumption — see design doc). |
+| `skills/red-team-conversation/SKILL.md` | Synthesizes the **current dialogue** (decisions, implementations, deferred items, untested assumptions) into a retrospective markdown document, then hands it to `red-team-spec` for the same critique loop. Use to stress-test decisions made in a conversation before they harden into code or commitments. |
 | `skills/redteam-brainstorm/SKILL.md` | Wrapper composing `superpowers:brainstorming → red-team-spec → superpowers:writing-plans` into one entry point. |
 
 ## Install
@@ -49,6 +50,12 @@ Walks you through `superpowers:brainstorming` as usual, then runs the critique l
 /red-team-spec docs/superpowers/specs/2026-05-14-foo-design.md
 ```
 Runs the loop on any markdown file you point at. Useful for retro-fitting critique on specs that were brainstormed without the wrapper.
+
+**Critique the current conversation** (decisions made in dialogue):
+```
+/red-team-conversation [optional-topic]
+```
+The skill synthesizes what just happened into `docs/superpowers/conversations/<date>-<slug>-conversation.md` — Goal, Decisions, Implementations, Discovered Issues, Open Questions, Untested Assumptions — asks you to confirm accuracy, then hands the file to the same `red-team-spec` critique loop. Use this when you want adversarial review of a working session before its conclusions calcify.
 
 ## How it works
 
@@ -153,7 +160,7 @@ Want to skip the wrapper and use a different brainstorming flow? Use `red-team-s
 - `agents/`, `skills/` — the installable artifacts (mirror of `~/.claude/` layout)
 - `docs/design.md` — full design doc (what was brainstormed to produce this package)
 - `docs/implementation-plan.md` — the implementation plan that was executed to build it
-- `install.sh` — idempotent installer
+- `install.sh` — idempotent installer (run after every `git pull`)
 
 ## License
 
