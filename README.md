@@ -13,7 +13,7 @@ This package gives you that loop as three reusable Claude Code artifacts.
 | File | Role |
 |---|---|
 | `agents/red-team-critic.md` | Reusable adversarial-reviewer subagent. Tools restricted to `Read`, `Grep` — cannot mutate the spec. |
-| `skills/red-team-spec/SKILL.md` | Standalone loop. Dispatches the critic, applies accepted findings to the spec, gates further rounds on user approval. Round 1 uses fresh `Agent()`; rounds 2+ use `SendMessage` to preserve debate context. |
+| `skills/red-team-spec/SKILL.md` | Standalone loop. Dispatches the critic, applies accepted findings to the spec, surfaces a per-round 1–10 readiness verdict, then gates further rounds on user approval. Round 1 uses fresh `Agent()`; rounds 2+ dispatch a new `Agent()` with the prior round's findings and rebuttal summary inlined in the prompt (the current Claude Code CLI does not expose `SendMessage` for true session resumption — see design doc). |
 | `skills/redteam-brainstorm/SKILL.md` | Wrapper composing `superpowers:brainstorming → red-team-spec → superpowers:writing-plans` into one entry point. |
 
 ## Install
@@ -63,14 +63,17 @@ Runs the loop on any markdown file you point at. Useful for retro-fitting critiq
 │                                                         │
 │   round 1: Agent(red-team-critic) ──────► doc B-1       │
 │            (clean context, hostile framing)             │
+│            doc B-1 leads with a 1-10 Verdict block      │
 │                                                         │
 │   main agent reads B-N → judges each finding            │
 │           accepted → Edit spec A in place               │
 │           rebutted → log in ## Design Decisions         │
 │                                                         │
-│   user gate: "another round?"                           │
-│      yes → SendMessage(critic) ─────────► doc B-(N+1)   │
-│            (same agent, full context preserved)         │
+│   user gate: Verdict (X/10 + recommendation)            │
+│              shown first; user picks "another round?"   │
+│      yes → Agent(critic) with prior doc B + rebuttal   │
+│            summary inlined ────────────► doc B-(N+1)    │
+│            (fresh dispatch, full context in prompt)     │
 │      no  → exit loop                                    │
 └────────────────────────┬────────────────────────────────┘
                          │
@@ -80,10 +83,21 @@ Runs the loop on any markdown file you point at. Useful for retro-fitting critiq
 └─────────────────────────────────────────────────────────┘
 ```
 
-### Why round-1 is clean but round-2+ persists context
+### Context continuity across rounds
 
 - **Round 1**: `Agent()` spawns a fresh subagent — no prior conversation, no anchor on the original author's framing. The "competitor AI submitted this" stance is intact.
-- **Round 2+**: `SendMessage` resumes the *same* subagent. The critic remembers its prior claims and the main agent's rebuttals. This prevents redundant re-discovery and lets the round become a genuine debate — the critic can concede points or escalate rebuttals it finds weak.
+- **Round 2+**: a **new** `Agent()` is dispatched, but the prompt inlines (a) the previous round's findings verbatim, (b) the main agent's accept/rebut decisions with reasons, (c) the revised spec path. The critic's system prompt instructs it to treat the pasted prior findings as its own prior position — so it drops resolved items, escalates weak rebuttals, and hunts for new weaknesses, exactly as a resumed session would.
+
+**Why not `SendMessage`?** The Claude Code CLI for this distribution does not expose a `SendMessage` tool that resumes a previously-spawned subagent (verified via `ToolSearch`). The Anthropic Agent SDK has the capability, but the installed tool set does not. Explicit context-passing achieves functionally equivalent behavior — and adds auditability (the round-2 prompt is inspectable) and isolation from cross-round persona drift.
+
+### Per-round verdict
+
+Every round, the critic produces a 1–10 readiness score with a one-sentence rationale and an explicit recommendation:
+- `9–10` → `Ready for implementation — no further rounds needed`
+- `5–8` → `Another round advised — significant gaps remain`
+- `1–4` → `Another round strongly advised — spec not safe to implement as-is`
+
+The skill surfaces this verdict prominently in the user-facing report *before* the "Run another round?" gate — so you decide based on the critic's calibrated assessment, not just by skimming the diff. For round 2+, the rationale references the prior round's score so you can see whether the spec is converging or stalling.
 
 ### What the critic looks at
 
@@ -105,6 +119,10 @@ Runs the loop on any markdown file you point at. Useful for retro-fitting critiq
 reviewed-spec: <spec filename>
 round: <N>
 ---
+## Verdict
+**Readiness: <N>/10** — <one-sentence rationale>
+**Recommendation:** <one of the three sentences from the rubric>
+
 ## CRITICAL  (spec not safe to adopt without addressing these)
 - **<gap title>** — Spec says "<quote>". Why: <one line>. What's needed: <one line>.
 ## HIGH  (strongly recommended)
