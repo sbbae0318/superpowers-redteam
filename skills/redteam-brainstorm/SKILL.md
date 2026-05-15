@@ -11,7 +11,19 @@ You are running a three-phase workflow that wraps the standard superpowers brain
 
 Invoke the `superpowers:brainstorming` skill via the `Skill` tool. Follow it through to completion: clarifying questions, design proposals, spec write, spec self-review, user approval.
 
-The brainstorming skill ends by directing you to invoke `superpowers:writing-plans`. **Do not do that yet.** Per the superpowers priority rule (user instructions override plugin skills), this wrapper's instructions take precedence over brainstorming's terminal-state directive.
+The brainstorming skill ends by directing you to invoke `superpowers:writing-plans`. **Do not do that yet.** This wrapper's instructions take precedence over brainstorming's terminal-state directive, per the explicit precedence rule documented in `superpowers:using-superpowers`:
+
+> "Superpowers skills override default system prompt behavior, but **user instructions always take precedence**: (1) User's explicit instructions (CLAUDE.md, GEMINI.md, AGENTS.md, direct requests) — highest priority; (2) Superpowers skills — override default system behavior where they conflict; (3) Default system prompt — lowest priority."
+
+A user-invoked wrapper skill (this one) counts as a user-directed instruction in that hierarchy, so it outranks brainstorming's terminal-state directive.
+
+**Observable failure mode if this precedence rule shifts in a future superpowers release:** the wrapper still runs Phase 1 normally, but brainstorming's terminal call to `superpowers:writing-plans` fires *immediately after the spec is written* — skipping Phase 2 (red-team) entirely. You will notice because:
+
+- no `<spec-basename>-redteam-round-1.md` file appears
+- no Verdict box is surfaced in the chat
+- a plan appears under `docs/superpowers/plans/` before red-team had a chance to mutate the spec
+
+If you observe any of these, **stop and surface the problem to the user** — do not silently proceed without red-team. Likely diagnosis: the precedence rule in `using-superpowers` has been weakened or removed.
 
 When brainstorming finishes, you should have:
 - A spec file at `docs/superpowers/specs/<date>-<topic>-design.md` (absolute path resolvable from cwd)

@@ -28,11 +28,11 @@ Resolve to an absolute path before anything else. If the file does not exist, st
    Agent({
      subagent_type: "red-team-critic",
      description: "Round 1 red-team review",
-     prompt: "Review the spec at <absolute spec path>. This is round 1. Write your findings to <absolute round-1 output path>. Follow the output format from your system prompt exactly — include the Verdict block at the top."
+     prompt: "Review the spec at <absolute spec path>. This is round 1. Return your findings as your final assistant message in the exact output format from your system prompt (Verdict block at the top, then CRITICAL / HIGH / MEDIUM / LOW sections). Do NOT call Write — the harness blocks subagents from writing report/findings .md files anyway. The main agent will persist your message to <absolute round-1 output path>."
    })
    ```
 
-3. After the subagent returns, read the round-1 output file. Extract the Verdict block (Readiness score, rationale, Recommendation) — you will surface it to the user verbatim in Phase C.
+3. Take the critic's final assistant message **verbatim** and Write it to `<absolute round-1 output path>`. Preserve the `---` frontmatter block exactly. Then extract the Verdict block (Readiness score, rationale, Recommendation) — you will surface it to the user verbatim in Phase C.
 
 ### Phase B — Apply findings to the spec
 
@@ -43,6 +43,8 @@ For every finding in the doc B output, regardless of severity, judge it on its m
 - **MEDIUM** and **LOW**: accept only if the change is small, clearly improves the spec, and aligns with the author's intent. Otherwise drop silently — do not record rebuttals for these.
 
 **For each accepted item:** apply an `Edit` to the spec file in place. The spec evolves across rounds.
+
+**Anchored edits are required.** When constructing the `Edit` `old_string`, include at least one line of unique surrounding context (a neighboring heading, a unique phrase) — *never* match on a short string that could appear in more than one place. If the target text is genuinely ambiguous, prefer rewriting the whole containing section: find the section by `##` heading, replace the section body. `Edit`-tool collisions on duplicated strings will produce silent, plausible-looking corruption — anchor or replace whole-section to prevent this.
 
 **For each rebutted CRITICAL or HIGH item:** append an entry to a `## Design Decisions (Round N)` section at the bottom of the spec. Create the section if it does not exist. Entry format:
 
@@ -58,27 +60,35 @@ Surface the critic's **Verdict** prominently before anything else. The user must
 
 ```
 ═══════════════════════════════════════════
- Red Team Round N Verdict
+ Red Team Round N Verdict     (~tokens: <rough estimate>)
 ═══════════════════════════════════════════
- Readiness: X/10 — <critic's one-line rationale, verbatim>
+ Readiness: X/10 — <critic's one-line rationale, verbatim, citing top unresolved item>
  Recommendation: <critic's recommendation, verbatim>
 
 ──────────────── Round N changes ────────────────
 
 Accepted (applied to spec):
-- <bullet for each accepted change, including severity tag>
+- [severity] <finding title> → edited <section-name or line-range>: <one-line summary of change>
+- ...
 
 Rebutted (logged in Design Decisions):
-- <bullet for each rebutted CRITICAL/HIGH, including severity tag and reason>
+- [severity] <finding title> → <one-line rebuttal reason>
+- ...
 
 Dropped silently (MEDIUM/LOW with no clear win):
 - <count only, e.g. "3 MEDIUM, 1 LOW">
 ```
 
+**Disclosure schema is mandatory.** Each accepted line must include the severity tag, the finding title (so user can find it in doc B), and a one-line description of what was edited (section or line range + summary). The user reviews this in lieu of a manual diff — a sloppy "(applied)" with no location or summary defeats Decision #3 (auto-revise + disclose).
+
+**Token estimate is informational.** Provide a rough cost estimate for the round (rule of thumb: doc B size + spec size + dispatch overhead, in tokens) so the user knows the running cost before electing another round. Imprecise is fine; absent is not.
+
 Then ask: **"Run another red-team round?"**
 
 - **User says no (or anything indicating done):** end the skill. Return the (revised) spec path. Caller — or the user — proceeds.
 - **User says yes:** go to Phase D.
+
+**Soft max-round warning.** If N ≥ 5 and the user requests another round, before dispatching, warn: "You have completed N rounds. Default soft max is 5 — further rounds typically find diminishing returns at increasing token cost. Confirm to proceed." Wait for a second explicit confirm before continuing to Phase D. This is a soft cap, not a hard one — the user can always override.
 
 Never skip the Verdict surfacing. If a user repeatedly runs rounds without reading the verdict, the loop is degrading into token-burn. The verdict is the user's signal for when to stop.
 
@@ -122,13 +132,14 @@ The Claude Code harness for this distribution does not expose a `SendMessage` to
    - Re-escalate any rebuttals you find weak (quote the rebuttal text)
    - Spend most attention on new weaknesses exposed by the revisions
    - Update your Verdict score to reflect current state and reference the prior round's score in the rationale
+   - Cite the top unresolved item in your rationale (required by your system prompt rule #6)
 
-   Write your new findings to <absolute round-(N+1) output path>. Follow the output format exactly, including the Verdict block at the top.
+   Return your findings as your final assistant message in the standard output format. The main agent will Write your message to <absolute round-(N+1) output path>; do NOT call Write.
      """
    })
    ```
 
-4. Read the new findings file. Loop back to Phase B with the new round number.
+4. Take the critic's final assistant message **verbatim** and Write it to `<absolute round-(N+1) output path>`. Loop back to Phase B with the new round number.
 
 ## Files this skill writes
 
