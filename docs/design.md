@@ -231,3 +231,58 @@ History is preserved by keeping round-N doc B files; spec A is mutated in place 
 - Should round-N doc B files be auto-deleted after the loop ends? Current plan: keep them as audit trail.
 - Should the wrapper skill expose options to skip Phase 2 (back to plain brainstorm)? Current plan: no — that's what `/superpowers:brainstorming` is for.
 - If `SendMessage` becomes available in this harness later, should the skill switch back to true session persistence? Current plan: keep explicit context-passing for auditability even if the alternative appears. Revisit only if context size becomes a concrete problem.
+
+---
+
+## v2 — Two-Path Upgrade (2026-05-22)
+
+The v1 design above describes a single generic adversarial-review skill. v2 keeps that as the **slim path** and adds a **full 6-layer path** (`red-team-spec-full`) for verified-facts workflows and spec-series critique.
+
+### What v2 adds
+
+- **`red-team-spec-full` skill** — orchestrates the full multi-agent protocol from the OpenMontage `multi-agent-red-teaming-{개요,설계,구현현황}` documents:
+  - L1 codebase audit (general-purpose subagent → `verified_facts/<topic>.yaml`, with user review gate)
+  - L3 deterministic gates (same tools as slim, but full path halts on missing tool rather than silent skip)
+  - L4 per-spec critic (same as slim)
+  - L5 cross-spec critic (series mode only — one critic reads all N specs)
+  - L6 banner drift (R2+, same tool as slim)
+- **`tools/` directory** — three Python tools migrated from OpenMontage, installed to `~/.claude/tools/redteam/`:
+  - `verify_spec_facts.py` (Gate C)
+  - `verify_signature_preservation.py` (Gate D2)
+  - `verify_banner_vs_body.py` (Layer 6)
+- **Agent patch** — `red-team-critic.md` gains `## CRITICAL category count` output block (categories A/B/C/D/E/F/G per the OpenMontage taxonomy) and a `## Cross-spec mode` section for series-mode dispatches.
+
+### Two-path rationale
+
+The full path costs more (audit ~30k tokens, cross-spec ~150k tokens) and requires structured spec blocks plus a real codebase to audit. The slim path costs nothing extra over v1 and degrades gracefully on plain markdown. Keeping both paths lets:
+
+- Existing users (`red-team-conversation`, `redteam-brainstorm` callers) get the v1-equivalent experience automatically (slim path, no behavior change).
+- Power users (OpenMontage spec series, verified-facts workflows) opt in to `red-team-spec-full` explicitly.
+
+No deprecation of the v1 skill. Slim path *is* the v1 skill plus optional gates + banner drift; gates / banner only fire when spec has the relevant blocks.
+
+### Hallucination category taxonomy (from OpenMontage docs)
+
+| Category | Catches | Layer |
+|---|---|---|
+| A | yaml fact contradiction | Gate C |
+| B | signature / kwarg drop | Gate D2 |
+| C | caller / contract drift | Per-spec critic |
+| D | design / runtime (gate uncatchable) | Per-spec critic |
+| E | cross-spec contract mismatch | Cross-spec critic |
+| F | banner-vs-body drift | Layer 6 |
+| G | semantically wrong but technically correct | Audit prompt refinement |
+
+The critic now reports counts per category so users can track distribution across rounds.
+
+### Migration
+
+OpenMontage's `tools/verify_*.py` are replaced with symlinks to the installed copies in `~/.claude/tools/redteam/`. Manual call sites (`python3 tools/verify_spec_facts.py ...`) in OpenMontage's Makefile and docs continue to work via the symlink redirect — no `sed` rewrites needed.
+
+### Non-goals (v2.0)
+
+- Deterministic replacement of L1 audit prompt (handoff Open Q #2)
+- Merge order DSL (handoff Open Q #1)
+- Banner auto-generation from task list (handoff Open Q #3)
+- Cross-spec critic 60% deterministic substitute (handoff Open Q #4)
+- Refactoring shared prose between slim and full SKILL.md into `references/` (deferred to v2.0.x patch)

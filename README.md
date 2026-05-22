@@ -13,9 +13,13 @@ This package gives you that loop as three reusable Claude Code artifacts.
 | File | Role |
 |---|---|
 | `agents/red-team-critic.md` | Reusable adversarial-reviewer subagent. Tools restricted to `Read`, `Grep` — cannot mutate the spec. |
-| `skills/red-team-spec/SKILL.md` | Standalone loop. Dispatches the critic, applies accepted findings to the spec, surfaces a per-round 1–10 readiness verdict, then gates further rounds on user approval. Round 1 uses fresh `Agent()`; rounds 2+ dispatch a new `Agent()` with the prior round's findings and rebuttal summary inlined in the prompt (the current Claude Code CLI does not expose `SendMessage` for true session resumption — see design doc). |
-| `skills/red-team-conversation/SKILL.md` | Synthesizes the **current dialogue** (decisions, implementations, deferred items, untested assumptions) into a retrospective markdown document, then hands it to `red-team-spec` for the same critique loop. Use to stress-test decisions made in a conversation before they harden into code or commitments. |
-| `skills/redteam-brainstorm/SKILL.md` | Wrapper composing `superpowers:brainstorming → red-team-spec → superpowers:writing-plans` into one entry point. |
+| `skills/red-team-spec/SKILL.md` | **Slim path (default).** L3 deterministic gates (when spec has structured blocks) + L4 per-spec critic + L6 banner drift on R2+. Round 1 fresh `Agent()`; rounds 2+ context-rich `Agent()` (no `SendMessage` in this CLI — see design doc). Graceful degrade: specs without structured blocks behave like v1 generic critique. |
+| `skills/red-team-spec-full/SKILL.md` | **Full 6-layer path.** Adds L1 codebase audit (general-purpose subagent → `verified_facts/<topic>.yaml`) and, in series mode (≥2 spec paths), L5 cross-spec critic. Requires the three tools to be installed at `~/.claude/tools/redteam/`. Use for verified-facts workflows or spec series. |
+| `skills/red-team-conversation/SKILL.md` | Synthesizes the **current dialogue** (decisions, implementations, deferred items, untested assumptions) into a retrospective markdown document, then hands it to `red-team-spec` (slim) for critique. |
+| `skills/redteam-brainstorm/SKILL.md` | Wrapper composing `superpowers:brainstorming → red-team-spec → superpowers:writing-plans` into one entry point. Always invokes the slim path. |
+| `tools/verify_spec_facts.py` | **Gate C** — deterministic yaml-vs-spec fact check. Compares `## Claimed facts` block against `verified_against:` yaml. Sub-second, $0. |
+| `tools/verify_signature_preservation.py` | **Gate D2** — AST diff on a `signature_changes:` block. Catches silent kwarg drops in refactors. |
+| `tools/verify_banner_vs_body.py` | **Layer 6** — R2+ banner-vs-body drift. Greps backticked tokens from a R2+ banner block against the spec body. |
 
 ## Install
 
@@ -39,7 +43,21 @@ cp skills/redteam-brainstorm/SKILL.md ~/.claude/skills/redteam-brainstorm/
 
 ## Usage
 
-**Full workflow** (brainstorm + red-team + plans in one go):
+### Two paths
+
+| Situation | Use |
+|---|---|
+| Single markdown spec, no audit, no gates needed (most cases) | `/red-team-spec <path>` |
+| Wrapper-generated spec (from `/redteam-brainstorm` or `/red-team-conversation`) | invoked automatically as `red-team-spec` (slim) |
+| OpenMontage-style spec with `verified_against:` frontmatter | `/red-team-spec-full <path>` |
+| Multi-spec series (Phase A/B/C/D) — cross-spec contract checks needed | `/red-team-spec-full <path1> <path2> ...` |
+| New spec without verified facts yet — want to bootstrap audit | `/red-team-spec-full <path>` (Phase 1 generates the yaml) |
+
+**Slim path (`red-team-spec`)** is the default for most users. It gracefully skips gates when the spec doesn't have structured blocks (`claimed_imports:`, `## Claimed facts`, `signature_changes:`), so it works on any markdown spec.
+
+**Full path (`red-team-spec-full`)** requires the deterministic tools at `~/.claude/tools/redteam/` (installed by `install.sh`). Use it when you want the full 6-layer protocol, audit included.
+
+### Full workflow (brainstorm + red-team + plans in one go):
 ```
 /redteam-brainstorm
 ```
