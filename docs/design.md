@@ -286,3 +286,56 @@ OpenMontage's `tools/verify_*.py` are replaced with symlinks to the installed co
 - Banner auto-generation from task list (handoff Open Q #3)
 - Cross-spec critic 60% deterministic substitute (handoff Open Q #4)
 - Refactoring shared prose between slim and full SKILL.md into `references/` (deferred to v2.0.x patch)
+
+---
+
+## v2.1 — Auto-Iterate Path (2026-05-22)
+
+v2.0 shipped two paths (slim + full). v2.1 adds a **third path** for unattended/abundant-resources scenarios.
+
+### What v2.1 adds
+
+- **`red-team-spec-auto` skill** — single-spec only; runs the red-team loop without per-round user gates, terminating on objective signals:
+  - `plateau` — same CRITICAL+HIGH normalized title set across 2 rounds
+  - `soft_plateau` — same `CRITICAL+HIGH` count for 3 rounds (secondary signal for cosmetic title drift)
+  - `stable` — CRITICAL=0 AND (HIGH=0 for 2 rounds, OR HIGH=1 with titles differing across rounds)
+  - `hard_cap` — round counter reaches `hard_cap` (default 10, configurable)
+  - `context_budget` — estimated next-round prompt would exceed 80% of `model_context_limit_tokens`
+  - `gate_fail` — any of Gate B/C/D2 fails (auto halts, unlike slim's "ask user")
+  - `critic_failure` — `Agent()` returned error/timeout/malformed output, retry-once exhausted
+  - `edit_cap_per_round` — > 5 CRITICAL findings in one round
+  - `rapid_mutation` — cumulative spec diff exceeds 50% of `round_0_snapshot` bytes
+  - `severity_oscillation` — same title flipped CRITICAL ↔ HIGH twice across the loop
+
+- **Severity policy in auto mode**: CRITICAL auto-accept, HIGH auto-rebut (logged in `## Design Decisions (Round N)`), MEDIUM/LOW skip. Edit scope hard-limited to the target spec (sibling files never mutated; cross-file recos logged separately).
+
+- **Concurrency lock** — `<spec>-redteam.lock` with PID + timestamp prevents duplicate invocations.
+
+- **Round-0 snapshot** stored in state YAML enables `discard` post-loop to revert the spec atomically.
+
+- **Final gate** (single, post-loop) — `merge / continue / discard` with explicit canonical input lists, ambiguity fallback (after 2 unrecognized → default merge), and 1-hour idle timeout (→ default merge).
+
+### Why a third path
+
+Slim and full both require per-round user gates. That's the right default — but it means a user who is away from the terminal can't run the loop unattended, and a user with abundant token budget (e.g., internal model) pays the gating tax even when they're happy to delegate per-round decisions.
+
+Auto path trades manual control for autonomy + a layered safety net (mutation caps, oscillation detection, gate halt, retry-once on critic failure, hard cap). The round-0 snapshot makes the trade reversible — discard wipes the loop's mutations.
+
+### Why no LLM score
+
+The OpenMontage handoff documents (and the v1/v2 sessions of this repo) flagged LLM-assigned `Readiness X/10` scores as unreliable due to anchoring, calibration drift, and non-determinism. Auto mode's termination uses ONLY objective signals: integer counts of CRITICAL/HIGH per round, normalized title sets, byte deltas, and round numbers. The critic still produces a Readiness score in its output (per the agent's system prompt), but the auto loop ignores it.
+
+### Non-goals (v2.1)
+
+- Cross-spec critic in auto mode (use full path; auto is single-spec only)
+- L1 audit in auto mode (use full path)
+- Configurable severity policy (CRITICAL accept / HIGH rebut is hard-coded in v2.1)
+- Fuzzy title matching for plateau (exact normalized match only; refinement candidate for v2.1.x)
+- Resume-from-state (overwrite-or-abort prompt is the only mid-flight option)
+- Wrappers (`red-team-conversation`, `redteam-brainstorm`) opt-in to auto mode (deferred to v2.1.x if requested)
+
+### v2.1 stale-bug notes (caught by Layer 1 audit, not in scope for this spec)
+
+The Layer 1 audit during the auto-mode spec's review surfaced a pre-existing issue:
+
+- **`redteam-brainstorm/SKILL.md` still has stale `SendMessage` references** from before v2 — the wrapper documents v1 round-2+ wiring via SendMessage which the slim path dropped in v2. Wrapper was not updated when slim was rewritten. Separate fix needed; tracked outside this design.

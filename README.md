@@ -15,6 +15,7 @@ This package gives you that loop as three reusable Claude Code artifacts.
 | `agents/red-team-critic.md` | Reusable adversarial-reviewer subagent. Tools restricted to `Read`, `Grep` — cannot mutate the spec. |
 | `skills/red-team-spec/SKILL.md` | **Slim path (default).** L3 deterministic gates (when spec has structured blocks) + L4 per-spec critic + L6 banner drift on R2+. Round 1 fresh `Agent()`; rounds 2+ context-rich `Agent()` (no `SendMessage` in this CLI — see design doc). Graceful degrade: specs without structured blocks behave like v1 generic critique. |
 | `skills/red-team-spec-full/SKILL.md` | **Full 6-layer path.** Adds L1 codebase audit (general-purpose subagent → `verified_facts/<topic>.yaml`) and, in series mode (≥2 spec paths), L5 cross-spec critic. Requires the three tools to be installed at `~/.claude/tools/redteam/`. Use for verified-facts workflows or spec series. |
+| `skills/red-team-spec-auto/SKILL.md` | **Auto / unattended path (v2.1).** Single-spec only. Runs up to 10 rounds without per-round user gate; terminates on objective signals (CRITICAL+HIGH title-set stability, count-stable plateau, hard cap, context budget, gate failure, critic failure, mutation caps, severity oscillation). CRITICAL auto-accept, HIGH auto-rebut, MED/LOW skip. Concurrency lock + round-0 snapshot for safe revert. Use when you have abundant model-token budget and want unattended convergence. |
 | `skills/red-team-conversation/SKILL.md` | Synthesizes the **current dialogue** (decisions, implementations, deferred items, untested assumptions) into a retrospective markdown document, then hands it to `red-team-spec` (slim) for critique. |
 | `skills/redteam-brainstorm/SKILL.md` | Wrapper composing `superpowers:brainstorming → red-team-spec → superpowers:writing-plans` into one entry point. Always invokes the slim path. |
 | `tools/verify_spec_facts.py` | **Gate C** — deterministic yaml-vs-spec fact check. Compares `## Claimed facts` block against `verified_against:` yaml. Sub-second, $0. |
@@ -43,7 +44,7 @@ cp skills/redteam-brainstorm/SKILL.md ~/.claude/skills/redteam-brainstorm/
 
 ## Usage
 
-### Two paths
+### Three paths (v2.1)
 
 | Situation | Use |
 |---|---|
@@ -52,10 +53,14 @@ cp skills/redteam-brainstorm/SKILL.md ~/.claude/skills/redteam-brainstorm/
 | OpenMontage-style spec with `verified_against:` frontmatter | `/red-team-spec-full <path>` |
 | Multi-spec series (Phase A/B/C/D) — cross-spec contract checks needed | `/red-team-spec-full <path1> <path2> ...` |
 | New spec without verified facts yet — want to bootstrap audit | `/red-team-spec-full <path>` (Phase 1 generates the yaml) |
+| Abundant token budget + want unattended loop convergence | `/red-team-spec-auto <path>` |
+| Spec that needs many rounds + you'll be away from the terminal | `/red-team-spec-auto <path>` |
 
 **Slim path (`red-team-spec`)** is the default for most users. It gracefully skips gates when the spec doesn't have structured blocks (`claimed_imports:`, `## Claimed facts`, `signature_changes:`), so it works on any markdown spec.
 
 **Full path (`red-team-spec-full`)** requires the deterministic tools at `~/.claude/tools/redteam/` (installed by `install.sh`). Use it when you want the full 6-layer protocol, audit included.
+
+**Auto path (`red-team-spec-auto`)** runs the loop without per-round user gates. Terminates on objective count/title-set signals plus safety halts (mutation caps, severity oscillation, gate failure, critic failure). CRITICAL findings auto-applied, HIGH auto-rebutted to `## Design Decisions (Round N)`. Round-0 snapshot kept in state YAML so you can discard the whole loop and revert. Use when (a) you have token budget for ~10 rounds × ~30k tokens each, (b) you want unattended convergence, (c) per-round manual review isn't critical to your workflow. Not recommended for: production-critical specs (the lack of per-round human review trades safety for autonomy).
 
 ### Full workflow (brainstorm + red-team + plans in one go):
 ```
