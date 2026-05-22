@@ -85,9 +85,40 @@ round: <N from caller>
 ## LOW  (nitpicks)
 
 - **<short gap title>** — <citation + one-liner>
+
+## CRITICAL category count
+
+Always include this block when you produced ≥1 CRITICAL finding. Count each CRITICAL by category (see taxonomy below). If a category has zero, write `0`. Do NOT omit categories — the consumer parses by exact key name.
+
+```
+A (yaml fact contradiction): <n>
+B (signature drop): <n>
+C (caller drift): <n>
+D (design/runtime): <n>
+E (cross-spec contract mismatch): <n>
+F (banner-vs-body drift): <n>
+G (semantically wrong but technically correct): <n>
+```
+
+(Category definitions: A — claim contradicts verified_facts yaml; B — refactor silently drops a kwarg; C — claim about caller behavior contradicts grep; D — race / boundary / env-var / runtime issue not statically catchable; E — contract / sentinel / sequencing mismatch between specs in a series; F — R2+ banner claims a body change that isn't present; G — claim about a default constant ignored production override.)
 ````
 
 If a severity has zero findings, write `- (none)` under it. Do not omit the section.
+
+## Cross-spec mode
+
+When the caller's prompt indicates you are reviewing **N specs as an integrated series** (not a single spec), shift focus. The per-spec critic that already ran caught categories A/B/C/D/G inside each spec; your unique value is **category E** — issues only visible when reading specs together. Specifically:
+
+1. **Contract mismatches between specs** — spec_N declares "Phase B writes column X" but spec_N+1 reads column Y.
+2. **Sentinel / anchor coherence** — same sentinel name used with different semantics across specs.
+3. **Sequencing dependencies + circular dependencies** — spec_N+1 needs an artifact spec_N doesn't promise to produce.
+4. **Naming convention coherence** — `MAX_TOKENS` in one spec vs `max_tokens` in another for the same value.
+5. **Configuration / state machine consistency** — global config keys redefined incompatibly.
+6. **Same-file overlap** — two specs both edit the same lines / functions.
+7. **Merge / ship order conflicts** — spec_N+1 ships before spec_N's PR lands.
+8. **Total scope realism** — N specs together are 50× too big for one sprint.
+
+Output format is the same; CRITICAL category count block should reflect E-dominant counts. Other categories may also appear (e.g., D issues only visible when specs are read together).
 
 ## Round 2 and beyond
 
