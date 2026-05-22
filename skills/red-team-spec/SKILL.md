@@ -1,156 +1,162 @@
 ---
 name: red-team-spec
-description: Run an adversarial Red Team critique loop on a spec or plan document. Dispatches a clean-context subagent (red-team-critic) to find gaps, then auto-revises the spec in place based on findings the main agent accepts. User-gated per round with the critic's own readiness verdict surfaced before the gate. Use when the user wants to stress-test a spec before implementing it, or invokes /red-team-spec <path>.
+description: Run an adversarial Red Team critique loop on a spec or plan document. Slim path — L3 deterministic gates + L4 per-spec critic + L6 banner drift (R2+). For the full 6-layer protocol (audit + cross-spec), use `red-team-spec-full`. Single spec or per-spec loop on multiple paths. User-gated per round with verdict surfaced before the gate.
 ---
 
-# Red Team Spec Critique Loop
+# Red Team Spec Critique Loop — Slim Path
 
-You are running an adversarial review of a single spec or plan document. A subagent (`red-team-critic`) reads it and writes structured findings — including a 1–10 readiness verdict — to a sibling file. You then revise the spec, surface the verdict to the user, and ask whether to run another round.
+You are running an adversarial review of one or more spec/plan documents using the slim path (no audit, no cross-spec). For each spec: optionally run deterministic gates, dispatch a `red-team-critic` subagent for findings, apply accepted findings, surface a verdict, gate further rounds on user approval.
+
+For the **full 6-layer protocol** (L1 audit + L5 cross-spec critic), use `/red-team-spec-full` instead.
 
 ## Input
 
-The user (or calling skill) gives you a spec file path. It may be:
-- absolute (e.g. `/home/.../docs/superpowers/specs/2026-05-14-foo-design.md`)
-- relative to the current working directory
-- omitted, in which case ask: "Which spec should I red-team? Give me the path."
+`/red-team-spec <path1> [path2 ...]`
 
-Resolve to an absolute path before anything else. If the file does not exist, stop and tell the user.
+- 1 path → single mode
+- 2+ paths → per-spec loop (this skill does NOT cross-correlate; use full path for cross-spec critique)
+- Path is omitted → ask: "Which spec(s) should I red-team? Give me the path(s)."
 
-## Workflow
+Resolve each path to absolute. If any does not exist, stop and tell the user.
 
-### Phase A — Round 1 (fresh critic context)
+## Workflow (per spec — for multi-path, run sequentially)
 
-1. Compute the round-1 output path: take the spec's directory, the spec's basename without the `.md` extension, and append `-redteam-round-1.md`. Example: `docs/superpowers/specs/2026-05-14-foo-design.md` → `docs/superpowers/specs/2026-05-14-foo-design-redteam-round-1.md`.
+### Phase A — Gates (L3, conditional firing)
 
-2. Dispatch the critic with a fresh `Agent()` call:
+For each gate, fire only if the spec contains the corresponding structured block. Gate tools are expected at `~/.claude/tools/redteam/`; if a tool file is missing, skip with a one-line warning (graceful degrade).
 
-   ```
-   Agent({
-     subagent_type: "red-team-critic",
-     description: "Round 1 red-team review",
-     prompt: "Review the spec at <absolute spec path>. This is round 1. Return your findings as your final assistant message in the exact output format from your system prompt (Verdict block at the top, then CRITICAL / HIGH / MEDIUM / LOW sections). Do NOT call Write — the harness blocks subagents from writing report/findings .md files anyway. The main agent will persist your message to <absolute round-1 output path>."
-   })
-   ```
+1. **Gate B — Import sandbox.** Fire iff the spec contains a `claimed_imports:` block (a fenced yaml under a `## Claimed imports` heading). For each `<module>: [<symbol>, ...]` entry, run `.venv/bin/python -c "from <module> import <symbol>; import inspect; print(inspect.signature(<symbol>))"` (or `python3` if no venv). On any ImportError: report and ask user `[abort / proceed-with-warning]`.
+2. **Gate C — `verify_spec_facts.py`.** Fire iff the spec contains a `## Claimed facts` block AND a `verified_against:` field in frontmatter. Run `python3 ~/.claude/tools/redteam/verify_spec_facts.py <spec> <yaml>`. Exit 0 = PASS; exit 1 = FAIL with diagnostic. On FAIL: report and ask user `[abort / proceed-with-warning]`.
+3. **Gate D2 — `verify_signature_preservation.py`.** Fire iff the spec contains a `signature_changes:` block. Run `python3 ~/.claude/tools/redteam/verify_signature_preservation.py <spec> <codebase_root>`. Same FAIL handling.
 
-3. Take the critic's final assistant message **verbatim** and Write it to `<absolute round-1 output path>`. Preserve the `---` frontmatter block exactly. Then extract the Verdict block (Readiness score, rationale, Recommendation) — you will surface it to the user verbatim in Phase C.
+If none of the gates have applicable blocks (typical for non-OpenMontage specs): print one line "no structured blocks → gates skipped" and proceed to Phase B. This makes the slim path behave identically to v1 generic critique on a plain markdown spec.
 
-### Phase B — Apply findings to the spec
+### Phase B — Per-spec critic (L4)
 
-For every finding in the doc B output, regardless of severity, judge it on its merits:
+Round 1: fresh `Agent({subagent_type: "red-team-critic", description: "Round 1 red-team review", prompt: "Review the spec at <abs path>. This is round 1. Return your findings as your final assistant message in the exact output format from your system prompt (Verdict block, then CRITICAL/HIGH/MEDIUM/LOW sections, then CRITICAL category count block). Do NOT call Write — the harness blocks subagents from writing report .md files. The main agent will persist your message to <abs round-1 output path>."})`
 
-- **CRITICAL**: strong-accept by default. Rebut only with an explicit, recorded reason. If you accept, edit the spec.
-- **HIGH**: weigh the argument. Accept if it survives scrutiny. Rebut otherwise — and record the reason.
-- **MEDIUM** and **LOW**: accept only if the change is small, clearly improves the spec, and aligns with the author's intent. Otherwise drop silently — do not record rebuttals for these.
+Round 2+: fresh `Agent()` with prior round's findings + accept/rebut summary inlined in the prompt (see Phase F template below). No `SendMessage` — verified absent in this harness; explicit context-passing achieves equivalent behavior.
 
-**For each accepted item:** apply an `Edit` to the spec file in place. The spec evolves across rounds.
+Persist the critic's final assistant message verbatim to `<spec-dir>/<spec-basename>-redteam-round-<N>.md`.
 
-**Anchored edits are required.** When constructing the `Edit` `old_string`, include at least one line of unique surrounding context (a neighboring heading, a unique phrase) — *never* match on a short string that could appear in more than one place. If the target text is genuinely ambiguous, prefer rewriting the whole containing section: find the section by `##` heading, replace the section body. `Edit`-tool collisions on duplicated strings will produce silent, plausible-looking corruption — anchor or replace whole-section to prevent this.
+### Phase C — Apply findings
 
-**For each rebutted CRITICAL or HIGH item:** append an entry to a `## Design Decisions (Round N)` section at the bottom of the spec. Create the section if it does not exist. Entry format:
+For each finding in doc B, regardless of severity, judge on its merits:
+
+- **CRITICAL**: strong-accept by default. Rebut only with an explicit, recorded reason.
+- **HIGH**: weigh the argument; accept if it survives scrutiny; rebut otherwise.
+- **MEDIUM / LOW**: accept only if the change is small, clearly improves the spec, and aligns with author intent. Otherwise drop silently — do not record rebuttals for these.
+
+**Anchored edits required.** When applying `Edit`, include at least one line of unique surrounding context in `old_string`. If the target text is ambiguous, prefer whole-section replacement (find section by `##` heading, replace its body). Never match on a short string that could appear in more than one place.
+
+**Rebutted CRITICAL/HIGH** → append entry to `## Design Decisions (Round N)` at the bottom of the spec:
 
 ```markdown
 ### <gap title>
-- **Critic:** <one-sentence summary of the finding>
-- **Decision:** rejected — <your reasoning, one or two sentences>
+- **Critic:** <one-sentence summary>
+- **Decision:** rejected — <reasoning>
 ```
 
-### Phase C — Report and gate
+### Phase D — Banner drift check (L6, R2+ only)
 
-Surface the critic's **Verdict** prominently before anything else. The user must see it before deciding whether to run another round — that is the whole point of the verdict. Single user-facing message in this exact shape:
+For round 2 and later, after Phase C edits land but before the report:
+
+```bash
+python3 ~/.claude/tools/redteam/verify_banner_vs_body.py <spec abs path>
+```
+
+Exit 0 = PASS; exit 1 = FAIL with diagnostic of missing-from-body banner tokens. Append the output to the round-N doc B file under a `## Layer 6 — Banner drift check` section.
+
+### Phase E — Report and gate
+
+Surface a single user-facing message in this shape:
 
 ```
 ═══════════════════════════════════════════
  Red Team Round N Verdict     (~tokens: <rough estimate>)
 ═══════════════════════════════════════════
- Readiness: X/10 — <critic's one-line rationale, verbatim, citing top unresolved item>
- Recommendation: <critic's recommendation, verbatim>
+ Readiness: X/10 — <critic's rationale verbatim, citing top unresolved>
+ Recommendation: <critic's recommendation verbatim>
+ CRITICAL category count: A=<n> B=<n> C=<n> D=<n> E=<n> F=<n> G=<n>
 
 ──────────────── Round N changes ────────────────
 
 Accepted (applied to spec):
-- [severity] <finding title> → edited <section-name or line-range>: <one-line summary of change>
-- ...
+- [severity] <finding title> → edited <section-name or line-range>: <one-line summary>
 
 Rebutted (logged in Design Decisions):
 - [severity] <finding title> → <one-line rebuttal reason>
-- ...
 
 Dropped silently (MEDIUM/LOW with no clear win):
-- <count only, e.g. "3 MEDIUM, 1 LOW">
+- <count, e.g. "3 MEDIUM, 1 LOW">
+
+──────────────── Open issues entering next round ────────────────
+- [CRITICAL] <title> (rebutted round N — see Design Decisions)
+- [HIGH] <title> (carryover from round 1; still unaddressed)
+- ...
 ```
 
-**Disclosure schema is mandatory.** Each accepted line must include the severity tag, the finding title (so user can find it in doc B), and a one-line description of what was edited (section or line range + summary). The user reviews this in lieu of a manual diff — a sloppy "(applied)" with no location or summary defeats Decision #3 (auto-revise + disclose).
+The **Open Issues panel** is auto-derived from: (a) this round's rebutted CRITICAL/HIGH, (b) spec's `## Outstanding Risks` entries without `→ RESOLVED` markers, (c) spec's `## Open Questions` entries without `→ DONE` markers. Lists everything still on the table for the next round.
 
-**Token estimate is informational.** Provide a rough cost estimate for the round (rule of thumb: doc B size + spec size + dispatch overhead, in tokens) so the user knows the running cost before electing another round. Imprecise is fine; absent is not.
+**Token estimate** = rough sum of doc B size + spec size + dispatch overhead (informational).
 
 Then ask: **"Run another red-team round?"**
 
-- **User says no (or anything indicating done):** end the skill. Return the (revised) spec path. Caller — or the user — proceeds.
-- **User says yes:** go to Phase D.
+- yes → Phase F context-rich dispatch (Round N+1)
+- no → end the skill; return the (possibly revised) spec path(s) to the caller
 
-**Soft max-round warning.** If N ≥ 5 and the user requests another round, before dispatching, warn: "You have completed N rounds. Default soft max is 5 — further rounds typically find diminishing returns at increasing token cost. Confirm to proceed." Wait for a second explicit confirm before continuing to Phase D. This is a soft cap, not a hard one — the user can always override.
+**Soft max-round warning.** If N ≥ 5 and user requests another round, warn: "You have completed N rounds; default soft max is 5; further rounds typically find diminishing returns. Confirm to proceed."
 
-Never skip the Verdict surfacing. If a user repeatedly runs rounds without reading the verdict, the loop is degrading into token-burn. The verdict is the user's signal for when to stop.
+### Phase F — Round N+1 dispatch (when user says yes)
 
-### Phase D — Round N+1 (context-rich fresh dispatch)
+For each spec being re-reviewed:
 
-The Claude Code harness for this distribution does not expose a `SendMessage` tool that resumes a previously-spawned subagent — checked at design time. Round 2+ therefore dispatches a **fresh** `Agent()` but inlines all prior context through the prompt. The critic's system prompt is designed to treat pasted prior findings as its own prior position, so behavior matches a true resumed session.
+```
+Agent({
+  subagent_type: "red-team-critic",
+  description: "Round <N+1> red-team review",
+  prompt: """
+This is round <N+1> of an ongoing adversarial review. Your prior findings and the main agent's response are below — treat the prior findings as YOUR OWN prior position.
 
-1. Compute the new output path: same pattern but with `round-<N+1>` instead of `round-N`.
+── Spec under review ──
+Path: <absolute spec path>
+(Re-read this file; it has been revised since round <N>.)
 
-2. Read the prior round's findings file (doc B-N) into memory — you will paste it into the prompt.
+── Your prior findings (round <N>), pasted verbatim ──
+<full contents of doc B-N>
 
-3. Dispatch a new `Agent()` call with the full prior context inlined:
+── Main agent's response ──
+Accepted and applied:
+- <bullets per accepted item>
+Rebutted (logged in Design Decisions):
+- <bullets per rebutted CRITICAL/HIGH with reasons>
+Dropped without recorded action: <count>
 
-   ```
-   Agent({
-     subagent_type: "red-team-critic",
-     description: "Round <N+1> red-team review",
-     prompt: """
-   This is round <N+1> of an ongoing adversarial review. Your prior findings and the main agent's response are below — treat the prior findings as YOUR OWN prior position, not as a new document.
+── Your task ──
+Follow the round-2+ instructions in your system prompt:
+- Drop items already resolved
+- Re-escalate weak rebuttals (quote the rebuttal)
+- Hunt for new weaknesses exposed by revisions
+- Update Verdict score and reference the prior round's score
+- Cite the top unresolved item
 
-   ── Spec under review ──
-   Path: <absolute spec path>
-   (Re-read this file; it has been revised since round <N>.)
+Return findings as your final assistant message. The main agent will persist to <abs round-(N+1) path>.
+"""
+})
+```
 
-   ── Your prior findings (round <N>), pasted verbatim ──
-   <full contents of doc B-N>
-
-   ── Main agent's response to your prior findings ──
-   Accepted and applied to the spec:
-   - <bullet per accepted item: severity + one-line summary>
-
-   Rebutted with documented reasoning (logged in spec's Design Decisions):
-   - <bullet per rebutted CRITICAL/HIGH: severity + one-line summary + rebuttal reason>
-
-   Dropped without recorded action (MEDIUM/LOW with no clear win):
-   - <count summary, e.g. "3 MEDIUM, 1 LOW">
-
-   ── Your task ──
-   Follow the round-2+ instructions in your system prompt:
-   - Drop items already resolved by accepted changes
-   - Re-escalate any rebuttals you find weak (quote the rebuttal text)
-   - Spend most attention on new weaknesses exposed by the revisions
-   - Update your Verdict score to reflect current state and reference the prior round's score in the rationale
-   - Cite the top unresolved item in your rationale (required by your system prompt rule #6)
-
-   Return your findings as your final assistant message in the standard output format. The main agent will Write your message to <absolute round-(N+1) output path>; do NOT call Write.
-     """
-   })
-   ```
-
-4. Take the critic's final assistant message **verbatim** and Write it to `<absolute round-(N+1) output path>`. Loop back to Phase B with the new round number.
+Then loop back to Phase C with the new round number.
 
 ## Files this skill writes
 
-- Mutations to the spec (Edit calls)
-- One findings file per round, in the spec's directory, named `<spec-basename>-redteam-round-<N>.md`
+- Per-round findings: `<spec-dir>/<spec-basename>-redteam-round-<N>.md`
+- In-place edits to spec: accepted-item edits + `## Design Decisions (Round N)` appendices
 
 ## Files this skill never writes
 
 - Anything outside `<spec-directory>/`
-- Any code, test, or implementation file
+- Code, tests, implementation files
 
 ## Termination
 
-The skill ends when the user declines another round. Do not auto-decide convergence on the user's behalf — the Verdict + Recommendation is informational, not binding. Do not invoke `writing-plans`; that is the caller's job (or the wrapper skill's job).
+The skill ends when the user declines another round. Do not auto-decide convergence. Do not invoke `writing-plans` — that is the caller's responsibility.
