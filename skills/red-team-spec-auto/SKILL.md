@@ -1,6 +1,6 @@
 ---
 name: red-team-spec-auto
-description: Run the red-team critique loop in unattended auto mode (no per-round user gate). Termination via objective count/title-set signals only — no LLM score is used. Single-spec only; for series use red-team-spec-full. CRITICAL findings auto-accept, HIGH auto-rebut, MEDIUM/LOW skip. Up to hard_cap rounds (default 10) with concurrency lock, failure recovery, mutation caps, and severity-oscillation detection. Use when you have abundant model-token budget and want unattended convergence.
+description: Run the red-team critique loop in unattended auto mode (no per-round user gate). Termination via objective count/title-set signals only — no LLM score is used. Single-spec only; for series use red-team-spec-full. CRITICAL findings auto-accept, HIGH auto-rebut, MEDIUM/LOW skip. Up to hard_cap rounds (default 10) with concurrency lock, failure recovery, per-round CRITICAL cap, identity-review gate (cumulative-edits threshold; user decides continue/abort with before/after summary), and severity-oscillation detection. Merge archives intermediate artifacts so the loop can naturally re-run. Use when you have abundant model-token budget and want unattended convergence.
 ---
 
 # Red Team Spec Critique — Auto Mode
@@ -49,7 +49,7 @@ Resolve to absolute. If not exists: stop.
    - If exists AND `round_0_snapshot` ≠ current spec text → prompt "previous state YAML found but spec text has changed — [overwrite (start fresh) / abort]?". Block until answered. On `abort`: release lock, exit. On `overwrite`: continue.
    - Otherwise (or after overwrite): write initial state YAML (see schema below).
 
-5. Announce templated: `"Auto mode — running up to <hard_cap> rounds. Termination conditions: stable / plateau / soft_plateau / hard_cap / context_budget / gate_fail / critic_failure / edit_cap_per_round / rapid_mutation / severity_oscillation. No per-round user gate; one merge/continue/discard gate at termination."`
+5. Announce templated: `"Auto mode — running up to <hard_cap> rounds. Termination conditions: stable / plateau / soft_plateau / hard_cap / context_budget / gate_fail / critic_failure / edit_cap_per_round / aborted_at_identity_review / severity_oscillation. No per-round user gate; one merge/continue/discard gate at termination. An identity-review gate may pause the loop if cumulative_critical_accepts > 25."`
 
 ### Phase 1a — Gates per round (L3, conditional firing)
 
@@ -82,7 +82,9 @@ On success: write critic's message verbatim to `<spec-dir>/<basename>-redteam-ro
 
 **Per-round CRITICAL edit cap:** if a round has > 5 CRITICAL findings → halt with `termination.reason: edit_cap_per_round` (record finding count in `termination.details`). Rationale: noisy critic emitting >5 CRITICAL/round is more likely malfunctioning than detecting genuine crisis; surface to user.
 
-**Per-loop rapid-mutation cap:** track `bytes_changed_cumulative` (absolute byte delta vs `round_0_snapshot`). If `bytes_changed_cumulative > 0.5 * len(round_0_snapshot)` → halt with `termination.reason: rapid_mutation`.
+**Per-loop cumulative-edits gate (identity review):** track `cumulative_critical_accepts` (count of CRITICAL findings auto-accepted across all rounds — includes both anchored `Edit` operations AND anchored-edit fallback appended sections). When `cumulative_critical_accepts > 25` (default; configurable per state YAML), **do NOT halt** — instead trigger an **identity review gate** (see Phase 2.5). Rationale for count-based metric (not byte-based): bytes are a weak proxy for "spec changed identity" — a 1-character API rename can be high impact; a verbose docstring addition can be low. Count of CRITICAL auto-accepts maps better to "spec mutations driven by critic". Threshold 25 = per-round CRITICAL cap (5) × hard_cap (10) ÷ 2, i.e., when cumulative impact reaches half the theoretical loop maximum.
+
+`bytes_changed_cumulative` is still tracked in state YAML but is informational only (no gating).
 
 **Severity oscillation detection:** for each finding title T (normalized — see Phase 3) in round N, compare against `CRITICAL_HIGH_titles` from rounds 1..N-1:
 - If T appeared as CRITICAL in round M and HIGH in round N (or vice versa), increment a per-title oscillation counter.
@@ -105,6 +107,57 @@ On success: write critic's message verbatim to `<spec-dir>/<basename>-redteam-ro
 
 **Alternative considered (rejected):** "CRITICAL+HIGH auto-accept with single pre-loop user confirmation." Rejected because (a) reintroduces gates contrary to auto-mode value proposition, (b) HIGH auto-accept compounds critic noise across rounds with no offsetting brake.
 
+### Phase 2.5 — Identity review gate (triggered by cumulative-edits threshold)
+
+Triggers iff `cumulative_critical_accepts > 25` (default; configurable per state YAML) AND the gate has not already fired in this invocation (one-time per run). Fires AFTER Phase 2 applies the current round's findings, BEFORE Phase 3 records state.
+
+**Render to user:**
+
+```
+═══════════════════════════════════════════
+ Identity Review Gate
+═══════════════════════════════════════════
+
+The auto loop has applied <cumulative_critical_accepts> CRITICAL findings across <N> rounds.
+At this point, the spec's identity may have drifted from what you submitted.
+
+──────────────── Identity: BEFORE (round 0) ────────────────
+<First 3 top-level `##` headings from round_0_snapshot, plus first 200 chars of body>
+
+──────────────── Identity: AFTER (current) ────────────────
+<First 3 top-level `##` headings from current spec, plus first 200 chars of body>
+
+──────────────── What changed (and the critic's reasoning) ────────────────
+CRITICAL findings auto-accepted (titles, grouped by round):
+  Round 1: <title1>, <title2>, ...
+  Round 2: <title3>, ...
+  ...
+
+Category breakdown: A=<n> B=<n> C=<n> D=<n> E=<n> F=<n> G=<n>
+Cumulative bytes changed: <bytes> (<pct>% of round_0) — informational
+
+──────────────── Why this gate fired ────────────────
+The critic has driven <cumulative_critical_accepts> changes — above the threshold (25).
+This is the auto loop asking: do you still want this trajectory?
+
+──────────────── Options ────────────────
+  [continue]  — accept the mutation trajectory; proceed to round <N+1>
+  [abort]     — halt loop now; proceed to Phase 6 with reason aborted_at_identity_review
+                (you can still merge, discard, or continue from Phase 6)
+```
+
+**Input recognition** (case-insensitive, whitespace stripped):
+- continue: `continue`, `c`, `proceed`, `keep going`, `go`, `ok`
+- abort: `abort`, `a`, `stop`, `halt`, `no`, `cancel`
+
+Ambiguous input: re-prompt once; after 2 unrecognized → default `abort` (conservative for this gate — abnormal mutation context).
+
+**Idle timeout: 1 hour → default `abort`** (NOT merge — this gate signals abnormal trajectory; the conservative default differs from the final gate's idle-default).
+
+**Outcomes:**
+- `continue` → set per-invocation flag `identity_gate_passed = true`; do NOT re-fire this gate again in the same invocation. Proceed to Phase 3.
+- `abort` → record `termination.reason: aborted_at_identity_review`, `termination.details: identity gate triggered at cumulative_critical_accepts=<N>, user aborted`. Skip Phase 3 for the current round (it's complete already); proceed to Phase 6 with the abort reason. In Phase 6, the user still gets merge/continue/discard options on the partially-revised spec.
+
 ### Phase 3 — Update state YAML
 
 Append a round entry. Title normalization: for each `- **<title>** — ...` bullet under `## CRITICAL` and `## HIGH`, extract the text between `**` markers; lowercase; collapse internal whitespace to single space; strip leading/trailing whitespace. Backticks preserved.
@@ -113,7 +166,7 @@ Append a round entry. Title normalization: for each `- **<title>** — ...` bull
 
 ### Phase 4 — Termination check (after each round)
 
-Mid-phase halts (`gate_fail` / `critic_failure` / `edit_cap_per_round` / `rapid_mutation` / `severity_oscillation`) take precedence — if any fired during current round's processing, terminate immediately with that reason.
+Mid-phase halts (`gate_fail` / `critic_failure` / `edit_cap_per_round` / `aborted_at_identity_review` / `severity_oscillation`) take precedence — if any fired during current round's processing, terminate immediately with that reason. Note: the identity-review gate (Phase 2.5) does NOT itself terminate the loop; only the user's `abort` decision at that gate produces `aborted_at_identity_review`.
 
 Otherwise, evaluate in order; first match wins:
 
@@ -192,9 +245,18 @@ Ambiguous input (anything not in the lists, e.g. `"yeah"`, `"k"`): re-print opti
 **Idle timeout**: if no input within 1 hour of prompt display → default `merge`, record `confirmed_action: merge_after_idle_timeout`. Auto mode is for unattended runs; an indefinite block defeats that.
 
 **Behavior per choice:**
-- `merge` → write `termination.confirmed_action: merge` + `confirmed_at` to state YAML; release lock; exit; return spec path (mutated).
-- `continue` → valid only for `termination.reason` ∈ `{plateau, soft_plateau, hard_cap}`. Other reasons (e.g., `gate_fail`, `critic_failure`, mutation caps, severity_oscillation) require addressing the root cause; refuse + re-prompt. On valid continue: run one more round (Phase 1a with `len(rounds)+1`); then return to Phase 6.
-- `discard` → restore spec from `round_0_snapshot` via `Write` (full overwrite); print `cross_file_recommendations` one more time (user may want to action those manually); write `termination.confirmed_action: discarded` + `confirmed_at`; release lock; exit; return spec path (now reverted).
+- `merge` → write `termination.confirmed_action: merge` + `confirmed_at` to state YAML. **Archive intermediate artifacts** so a subsequent auto run on this spec starts clean (no stale state-YAML mismatch prompt in Phase 0):
+  1. `mkdir -p <spec-dir>/.redteam-archive/<ISO timestamp>/`
+  2. `mv <spec-dir>/<basename>-redteam-round-*.md → <archive-dir>/`
+  3. `mv <spec-dir>/<basename>-redteam-state.yaml → <archive-dir>/`
+  4. Release lock (`rm <spec-dir>/<basename>-redteam.lock`)
+  5. Print: `"Archived <N> round files + state YAML to <archive-dir>. Spec ready for re-runs without state conflict."`
+
+  Exit; return spec path (mutated). The archive preserves audit trail for later inspection.
+
+- `continue` → valid only for `termination.reason` ∈ `{plateau, soft_plateau, hard_cap, aborted_at_identity_review}`. Other reasons (e.g., `gate_fail`, `critic_failure`, `edit_cap_per_round`, `severity_oscillation`) require addressing the root cause; refuse + re-prompt. On valid continue: run one more round (Phase 1a with `len(rounds)+1`); then return to Phase 6. (Note: `aborted_at_identity_review` is continuable — the user can choose to push past the identity gate after seeing the report. Identity-gate one-time-flag remains set, so the gate does NOT re-fire even after threshold remains crossed.)
+
+- `discard` → restore spec from `round_0_snapshot` via `Write` (full overwrite); print `cross_file_recommendations` one more time (user may want to action those manually); write `termination.confirmed_action: discarded` + `confirmed_at`. **Archive same way as merge** (the audit trail of what was tried is valuable even if reverted — directory marker `.redteam-archive/<ISO>/discarded/` so the reverted-vs-merged distinction is visible). Release lock; exit; return spec path (now reverted).
 
 ### Phase 7 — Termination metadata + cleanup
 
@@ -239,13 +301,14 @@ rounds:
       G: <n>
     CRITICAL_HIGH_titles: [<str>, <str>, ...]
     dropped_count: <n>                 # MEDIUM + LOW dropped silently
-    bytes_changed_cumulative: <int>
+    cumulative_critical_accepts: <int>     # count-based; gate trigger metric
+    bytes_changed_cumulative: <int>        # informational only; not a gate trigger
     cross_file_recommendations_logged: <n>
   - round: 2
     ...
 termination:
   reason: <stable | plateau | soft_plateau | hard_cap | context_budget |
-           gate_fail | critic_failure | edit_cap_per_round | rapid_mutation |
+           gate_fail | critic_failure | edit_cap_per_round | aborted_at_identity_review |
            severity_oscillation>
   round: <N>
   triggered_at: <ISO>

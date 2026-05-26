@@ -304,8 +304,12 @@ v2.0 shipped two paths (slim + full). v2.1 adds a **third path** for unattended/
   - `gate_fail` — any of Gate B/C/D2 fails (auto halts, unlike slim's "ask user")
   - `critic_failure` — `Agent()` returned error/timeout/malformed output, retry-once exhausted
   - `edit_cap_per_round` — > 5 CRITICAL findings in one round
-  - `rapid_mutation` — cumulative spec diff exceeds 50% of `round_0_snapshot` bytes
+  - `aborted_at_identity_review` — user chose `abort` at the identity-review gate (see below)
   - `severity_oscillation` — same title flipped CRITICAL ↔ HIGH twice across the loop
+
+- **Identity-review gate (Phase 2.5)** — fires when `cumulative_critical_accepts > 25` (configurable; one-time per invocation). NOT a halt — pauses the loop and surfaces an identity before/after summary (top-level `##` headings + body preview) plus the list of accepted CRITICAL titles per round. User picks `continue` (proceed; gate one-time flag set) or `abort` (terminate with `aborted_at_identity_review`). Replaces v2.1 draft's byte-based `rapid_mutation` halt with a count-based interactive gate. Threshold 25 = per-round CRITICAL cap (5) × hard_cap (10) ÷ 2 = half the theoretical loop maximum. Idle timeout at this gate defaults to `abort` (more conservative than the final gate's idle default `merge`).
+
+- **Merge archive (Phase 6)** — on `merge` choice, intermediate artifacts (per-round doc B files + state YAML) are moved to `<spec-dir>/.redteam-archive/<ISO>/`. The lock file is removed. A subsequent `red-team-spec-auto` invocation on the same spec starts cleanly — no state-YAML mismatch prompt — while audit trail remains under `.redteam-archive/`. `discard` also archives (preserves the trail of what was tried even when reverting), with a subdirectory marker `discarded/`.
 
 - **Severity policy in auto mode**: CRITICAL auto-accept, HIGH auto-rebut (logged in `## Design Decisions (Round N)`), MEDIUM/LOW skip. Edit scope hard-limited to the target spec (sibling files never mutated; cross-file recos logged separately).
 
