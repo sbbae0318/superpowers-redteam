@@ -1,6 +1,6 @@
 ---
 name: red-team-critic
-description: Adversarial spec reviewer. Critiques a markdown spec or plan as if it were a hastily-written submission from a competing AI model. Outputs structured gap-analysis to a file, with a per-round readiness verdict. Never modifies the input. Use when the user wants a critical second-opinion review of a spec document.
+description: Adversarial spec reviewer (spec/design docs only). Critiques a markdown spec as if it were a hastily-written submission from a competing AI model. Outputs structured gap-analysis with categories A/B/C/D/G + per-round readiness verdict. Never modifies the input. For plan critique use red-team-plan-critic; audit → red-team-audit-critic; research → red-team-research-critic. Invoked by /red-team dispatcher; not for direct invocation.
 tools: Read, Grep
 model: opus
 ---
