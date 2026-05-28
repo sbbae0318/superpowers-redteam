@@ -342,4 +342,44 @@ The OpenMontage handoff documents (and the v1/v2 sessions of this repo) flagged 
 
 The Layer 1 audit during the auto-mode spec's review surfaced a pre-existing issue:
 
-- **`redteam-brainstorm/SKILL.md` still has stale `SendMessage` references** from before v2 — the wrapper documents v1 round-2+ wiring via SendMessage which the slim path dropped in v2. Wrapper was not updated when slim was rewritten. Separate fix needed; tracked outside this design.
+- **`redteam-brainstorm/SKILL.md` still has stale `SendMessage` references** from before v2 — the wrapper documents v1 round-2+ wiring via SendMessage which the slim path dropped in v2. Wrapper was not updated when slim was rewritten. Separate fix needed; tracked outside this design. **→ RESOLVED in v3.0** (wrapper deleted entirely).
+
+---
+
+## v3.0 — Dispatcher (2026-05-22)
+
+v2.1 shipped 5 user-facing skills (slim, full, auto, conversation, brainstorm). v3.0 restructures to:
+
+- **2 dispatchers** (`/red-team` interactive, `/red-team-auto` auto-loop) — both with doc-type routing
+- **4 critic-agent personas** (spec, plan, audit, research) — persona only; workflow lives in dispatchers
+- **Drop wrappers** (`red-team-conversation`, `redteam-brainstorm`); replaced by README "Manual workflow patterns" section
+
+### What v3.0 adds
+
+- **Doc-type routing**: dispatcher detects type at Phase 0 — frontmatter `type:` field > filename heuristic > user confirmation. Selected critic-agent persists for all rounds in the invocation.
+- **Per-doc-type critic personas**:
+  - `red-team-critic` (spec) — categories A/B/C/D/G — existing persona kept
+  - `red-team-plan-critic` (plan) — categories A/C/D/G — plan-shaped weaknesses (granularity, ordering, untested codebase assumptions, sequencing edge cases)
+  - `red-team-audit-critic` (audit) — categories A/C/G — fact-check tone (less adversarial); classifies default-vs-production conflations as Category G classical case
+  - `red-team-research-critic` (research) — new categories H/I/J/K — unsupported claim / missed alternative / conflated concepts / stale citation
+- **`*-spec-*` filename skips confirmation** — high-confidence path; everything else prompts user (philosophy: ask-when-uncertain)
+- **`.yaml` extension NOT routed to audit** — too broad; falls through to default = spec → user prompted to override
+
+### What v3.0 removes
+
+- `skills/red-team-spec/` (slim) — subsumed by `/red-team`
+- `skills/red-team-spec-full/` (full) — subsumed by `/red-team` + dispatcher's audit-aware gating
+- `skills/red-team-conversation/` — replaced by README manual workflow pattern
+- `skills/redteam-brainstorm/` — replaced by README manual workflow pattern + resolves stale-SendMessage bug
+- Series mode (L5 cross-spec critic) — deferred to v3.1 (single-doc-per-invocation in v3.0)
+
+### Migration
+
+Clean break. install.sh deletes deprecated v2.1 skill directories on first run (with `[y/N]` prompt; `--yes` or `REDTEAM_YES=1` bypass). State YAMLs from v2.1 auto runs remain readable (schema is a subset).
+
+### Non-goals (v3.0)
+
+- Series mode / multi-doc-per-invocation (deferred to v3.1)
+- Auto-detection from body content / heading patterns
+- Backward-compat shims for old skill names
+- Wrappers reborn
