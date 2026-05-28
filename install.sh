@@ -36,6 +36,7 @@ done
 DEPRECATED_DIRS=(
   "$CLAUDE_DIR/skills/red-team-spec"
   "$CLAUDE_DIR/skills/red-team-spec-full"
+  "$CLAUDE_DIR/skills/red-team-spec-auto"
   "$CLAUDE_DIR/skills/red-team-conversation"
   "$CLAUDE_DIR/skills/redteam-brainstorm"
 )
