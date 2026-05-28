@@ -1,6 +1,6 @@
 ---
 name: red-team
-description: Adversarial red-team critique loop for a markdown document. v3.0 dispatcher — routes to the right critic persona based on doc type (spec / plan / audit / research). Single-pass interactive mode with per-round user gate. For unattended auto-loop use red-team-spec-auto. Doc type is detected from frontmatter `type:` field OR filename pattern; user confirms before dispatch (except for `*-spec-*` files which skip confirmation).
+description: Adversarial red-team critique loop for a markdown document. v3.0 dispatcher — routes to the right critic persona based on doc type (spec / plan / audit / research). Single-pass interactive mode with per-round user gate. For unattended auto-loop use red-team-auto. Doc type is detected from frontmatter `type:` field OR filename pattern; user confirms before dispatch (except for `*-spec-*` files which skip confirmation).
 ---
 
 # Red Team Dispatcher — Interactive Mode
