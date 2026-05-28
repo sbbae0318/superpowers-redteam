@@ -3,21 +3,21 @@ name: red-team-auto
 description: Run the red-team critique loop in unattended auto mode (no per-round user gate). v3.0 adds doc-type routing (spec/plan/audit/research) — Phase 0 detects type and selects matching critic agent. Termination via objective count/title-set signals only — no LLM score is used. Single-doc per invocation. CRITICAL findings auto-accept, HIGH auto-rebut, MEDIUM/LOW skip. Up to hard_cap rounds (default 10) with concurrency lock, failure recovery, per-round CRITICAL cap, identity-review gate (cumulative-edits threshold; user decides continue/abort with before/after summary), and severity-oscillation detection. Merge archives intermediate artifacts so the loop can naturally re-run. Use when you have abundant model-token budget and want unattended convergence.
 ---
 
-# Red Team Spec Critique — Auto Mode
+# Red Team Auto Mode — Dispatcher
 
-You are running the red-team critique loop without per-round user gates. For each round, you dispatch the critic, auto-accept CRITICAL findings, auto-rebut HIGH findings, and check objective termination conditions. The loop runs up to `hard_cap` rounds (default 10) or until a termination condition fires.
+You are running the red-team critique loop without per-round user gates. v3.0 adds doc-type routing: Phase 0 detects the document type (spec/plan/audit/research) and selects the matching critic agent for all rounds in this invocation. For each round you dispatch the selected critic, auto-accept CRITICAL findings, auto-rebut HIGH findings, and check objective termination conditions. The loop runs up to `hard_cap` rounds (default 10) or until a termination condition fires.
 
-For interactive critique with per-round gates, use `red-team-spec` (slim) or `red-team-spec-full` (6-layer). For spec series, use `red-team-spec-full`.
+For interactive critique with per-round gates, use `/red-team` (the v3.0 interactive dispatcher).
 
-The auto path assumes `~/.claude/tools/redteam/` exists with the three tool files. Halts on missing tools (no graceful degrade — use slim path for tool-absent environments).
+The auto path assumes `~/.claude/tools/redteam/` exists with the three tool files. Halts on missing tools.
 
 ## Input
 
-`/red-team-spec-auto <path>`
+`/red-team-auto <path>`
 
 - 1 path → proceed
-- 2+ paths → refuse; tell user "auto mode is single-spec; for series use `/red-team-spec-full`".
-- Path omitted → ask: "Which spec should I auto-red-team?"
+- 2+ paths → refuse; tell user "auto mode is single-doc per invocation; for series support see v3.1 (deferred)".
+- Path omitted → ask: "Which document should I auto-red-team?"
 
 Resolve to absolute. If not exists: stop.
 

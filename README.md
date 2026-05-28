@@ -36,11 +36,22 @@ The installer copies files to `~/.claude/agents/` and `~/.claude/skills/`. Idemp
 
 Manual install (if you want full control):
 ```bash
-mkdir -p ~/.claude/agents ~/.claude/skills/red-team-spec ~/.claude/skills/redteam-brainstorm
-cp agents/red-team-critic.md ~/.claude/agents/
-cp skills/red-team-spec/SKILL.md ~/.claude/skills/red-team-spec/
-cp skills/redteam-brainstorm/SKILL.md ~/.claude/skills/redteam-brainstorm/
+mkdir -p ~/.claude/agents ~/.claude/skills/red-team ~/.claude/skills/red-team-auto ~/.claude/tools/redteam
+cp agents/red-team-critic.md          ~/.claude/agents/
+cp agents/red-team-plan-critic.md     ~/.claude/agents/
+cp agents/red-team-audit-critic.md    ~/.claude/agents/
+cp agents/red-team-research-critic.md ~/.claude/agents/
+cp skills/red-team/SKILL.md           ~/.claude/skills/red-team/
+cp skills/red-team-auto/SKILL.md      ~/.claude/skills/red-team-auto/
+cp tools/verify_spec_facts.py             ~/.claude/tools/redteam/
+cp tools/verify_signature_preservation.py ~/.claude/tools/redteam/
+cp tools/verify_banner_vs_body.py         ~/.claude/tools/redteam/
+chmod +x ~/.claude/tools/redteam/*.py
 ```
+
+Note: if upgrading from v2.1, also delete deprecated dirs:
+`rm -rf ~/.claude/skills/{red-team-spec,red-team-spec-full,red-team-spec-auto,red-team-conversation,redteam-brainstorm}`
+(the `./install.sh` script does this automatically with a confirmation prompt).
 
 ## Usage
 
@@ -185,15 +196,15 @@ round: <N>
 - **User-gated, not auto-converged.** No heuristic decides when the critic is "satisfied" — the user runs another round only if they want one. LLM self-evaluation of done-ness is unreliable.
 - **Severity is a prioritization hint, not a filter.** The main agent reviews all severities. CRITICAL gets strong-accept by default, MEDIUM/LOW gets accepted only when cheap and clearly-improving.
 - **Audit trail.** Rebutted CRITICAL/HIGH findings get logged in a `## Design Decisions (Round N)` section at the bottom of the spec. Future readers can see what the critic argued and why it was rejected.
-- **Composable.** `red-team-spec` works on any spec, not just those produced by the wrapper. The `red-team-critic` agent is reusable — you can build other workflows on top of it.
+- **Composable.** `/red-team` works on any document, not just brainstorm output. The four critic agents are individually reusable — you can build other workflows on top of them.
 
 ## Customization
 
-Want a different tone (less dismissive, more constructive)? Edit `~/.claude/agents/red-team-critic.md` — the persona is in the system prompt below the frontmatter.
+Want a different tone (less dismissive, more constructive)? Edit the persona in `~/.claude/agents/red-team-critic.md` (spec) or one of the doc-type variants (`red-team-plan-critic.md`, `red-team-audit-critic.md`, `red-team-research-critic.md`) — each persona is in the system prompt below the frontmatter.
 
-Want a different acceptance policy (e.g., always log MEDIUM rebuttals too)? Edit Phase B of `~/.claude/skills/red-team-spec/SKILL.md`.
+Want a different acceptance policy (e.g., always log MEDIUM rebuttals too)? Edit Phase C of `~/.claude/skills/red-team/SKILL.md` (interactive) or the equivalent section in `~/.claude/skills/red-team-auto/SKILL.md` (auto-loop).
 
-Want to skip the wrapper and use a different brainstorming flow? Use `red-team-spec` standalone — it doesn't care how the spec was produced.
+Want to change doc-type detection (e.g., always default to plan instead of spec)? Edit Phase 0 of `~/.claude/skills/red-team/SKILL.md`.
 
 ## Repository contents
 
