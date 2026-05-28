@@ -1,6 +1,6 @@
 ---
-name: red-team-spec-auto
-description: Run the red-team critique loop in unattended auto mode (no per-round user gate). Termination via objective count/title-set signals only — no LLM score is used. Single-spec only; for series use red-team-spec-full. CRITICAL findings auto-accept, HIGH auto-rebut, MEDIUM/LOW skip. Up to hard_cap rounds (default 10) with concurrency lock, failure recovery, per-round CRITICAL cap, identity-review gate (cumulative-edits threshold; user decides continue/abort with before/after summary), and severity-oscillation detection. Merge archives intermediate artifacts so the loop can naturally re-run. Use when you have abundant model-token budget and want unattended convergence.
+name: red-team-auto
+description: Run the red-team critique loop in unattended auto mode (no per-round user gate). v3.0 adds doc-type routing (spec/plan/audit/research) — Phase 0 detects type and selects matching critic agent. Termination via objective count/title-set signals only — no LLM score is used. Single-doc per invocation. CRITICAL findings auto-accept, HIGH auto-rebut, MEDIUM/LOW skip. Up to hard_cap rounds (default 10) with concurrency lock, failure recovery, per-round CRITICAL cap, identity-review gate (cumulative-edits threshold; user decides continue/abort with before/after summary), and severity-oscillation detection. Merge archives intermediate artifacts so the loop can naturally re-run. Use when you have abundant model-token budget and want unattended convergence.
 ---
 
 # Red Team Spec Critique — Auto Mode
@@ -37,6 +37,22 @@ Resolve to absolute. If not exists: stop.
 
 1. Resolve spec path to absolute. If not exists: stop, tell user.
 
+1.5. **Type determination** (same cascade as `/red-team` dispatcher Phase 0):
+   a. If frontmatter `type:` field present → use it; skip confirmation.
+   b. Else apply filename heuristics:
+      - `*-spec-*` or `-spec.md` → `spec` (skip confirmation, high-confidence)
+      - `*-research-*` / `-research.md` / `*-survey-*` / `-survey.md` / `*-comparison-*` / `-comparison.md` / `*-falsification-*` → `research` (confirm)
+      - `*-plan-*` / `-plan.md` / under `/docs/superpowers/plans/` → `plan` (confirm)
+      - `*-audit-*` / `-audit.md` → `audit` (confirm)
+      - default → `spec` (confirm)
+   c. For non-`*-spec-*` matches: prompt user as in `/red-team` Phase 0 step 3 (with offer to pin via frontmatter).
+   d. Select `agent_name`:
+      - spec → `red-team-critic`
+      - plan → `red-team-plan-critic`
+      - audit → `red-team-audit-critic`
+      - research → `red-team-research-critic`
+   e. Type does NOT change mid-loop (one type per invocation).
+
 2. **Concurrency lock.** Check `<spec-dir>/<spec-basename>-redteam.lock`. If present:
    - Read PID + `started_at` from lock
    - If `kill -0 <PID>` succeeds AND `started_at` is within 1 hour: refuse — another invocation in progress. Tell user lock path + PID; exit.
@@ -53,6 +69,10 @@ Resolve to absolute. If not exists: stop.
 
 ### Phase 1a — Gates per round (L3, conditional firing)
 
+**Skip Phase 1a entirely if `doc_type ∈ {audit, research}`** — gate-relevant blocks don't exist in those doc types. Proceed directly to Phase 1b.
+
+For spec/plan only:
+
 For round N, run gates that apply to the (possibly-mutated) spec at this round:
 
 1. **Gate B (import sandbox)** — fire iff spec contains a `claimed_imports:` fenced yaml under a `## Claimed imports` heading.
@@ -65,7 +85,7 @@ If no gates applicable: print `"no structured blocks → gates skipped"` and con
 
 ### Phase 1b — Round N critic dispatch
 
-Round 1: fresh `Agent({subagent_type: "red-team-critic", description: "Round 1 red-team review (auto mode)", prompt: <slim Phase B template>})`. Critic returns findings as text.
+Round 1: fresh `Agent({subagent_type: "<agent_name>", description: "Round 1 red-team review (auto mode, type=<doc_type>)", prompt: <slim Phase B template adapted to doc_type>})`. Critic returns findings as text.
 
 Round 2+: fresh `Agent()` with prior doc B + accept/rebut summary inlined per slim Phase F template, plus add `"Auto mode: HIGH items are being auto-rebutted; re-escalate to CRITICAL if you believe one is genuinely unsafe."` to the prompt.
 
